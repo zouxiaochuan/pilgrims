@@ -1,0 +1,32 @@
+{
+    "master_ip": "127.0.0.1",
+    "master_port": 32171,
+    "problem_path": "problems/kore",
+    "agent_module_name": "agent_kore",
+    "agent_class_name": "KoreAgent",
+    "env_module_name": "env_kore",
+    "env_class_name": "KoreEnv",
+    "map_size": 21,
+    "agent": {
+        "num_candidate_points": 10,
+        "num_encode_layers": 2,
+        "hidden_size": 128,
+        "point_temperature": 0.1
+    },
+    "actor": {
+        "num_states_per_play": 2,
+        "temperature": 1.0,
+        "batch_size": 2,
+        "save_play_interval": 1,
+        "save_play_path": "save/play/"
+    },
+    "parameter_server": {
+        "num_workers": 1,
+        "load_model_path": null
+    },
+    "learner": {
+        "num_step_per_push_ps": 10,
+        "num_data_workers": 0,
+        "batch_size": 4
+    }
+}
