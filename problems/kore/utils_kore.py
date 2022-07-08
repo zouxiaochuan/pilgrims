@@ -1,6 +1,7 @@
 
 from kaggle_environments.envs.kore_fleets.helpers import Board
 import numpy as np
+import torch
 
 
 def get_board_kore(board: Board):
@@ -25,7 +26,7 @@ def add_mirror_xy(xy, size=21):
     pass
 
 
-def stack_value(v1, v2):
+def stack_value(v1, v2, device='cpu'):
     '''
     Parameters:
         v1:
@@ -34,15 +35,15 @@ def stack_value(v1, v2):
     Returns:
         [n, 2]
     '''
-    if isinstance(v1, np.ndarray):
-        v2_ = np.zeros_like(v1)
-        v2_.fill(v2)
+    if isinstance(v1, torch.Tensor):
+        v2_ = torch.zeros_like(v1)
+        v2_.fill_(v2)
         v2 = v2_
         pass
     else:
-        v1_ = np.zeros_like(v2)
-        v1_.fill(v1)
+        v1_ = torch.zeros_like(v2)
+        v1_.fill_(v1)
         v1 = v1_
         pass
 
-    return np.stack([v1, v2], axis=1)
+    return torch.stack([v1, v2], dim=1)

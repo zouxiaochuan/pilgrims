@@ -4,6 +4,7 @@ import json
 import sys
 import os
 import importlib
+import torch
 
 
 def get_nameserver(host, port) -> NameServer:
@@ -40,3 +41,19 @@ def relative_import_module_and_get_class(module_path, module_name, class_name):
     return cls
     pass
 
+def batch_to_device(batch, device):
+    b = dict()
+
+    for k, v in batch.items():
+        if isinstance(v, torch.Tensor):
+            b[k] = v.to(device)
+            pass
+        elif isinstance(v, dict):
+            b[k] = batch_to_device(v, device)
+            pass
+        else:
+            b[k] = v
+            pass
+        pass
+    return b
+    pass

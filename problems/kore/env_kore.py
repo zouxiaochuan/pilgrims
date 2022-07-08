@@ -3,6 +3,9 @@ import numpy as np
 from kaggle_environments.envs.kore_fleets.helpers import Board, ShipyardAction, PlayerId
 from copy import deepcopy
 from typing import Dict
+import time
+import os
+import pickle
 
 
 GLOBAL_INITIAL_ENV = kaggle_environments.make("kore_fleets")
@@ -22,6 +25,8 @@ class KoreEnv:
             self.board = deepcopy(board)
             pass
         self.done = False
+        self.rewards = np.array([0, 0], dtype='float32')
+        self.player_fail = [False, False]
         self.check_done()
         pass
 
@@ -30,6 +35,8 @@ class KoreEnv:
         env.reset(num_agents=2)
         self.board = Board(env.state[0].observation, self.configuration)
         self.done = False
+        self.rewards.fill(0)
+        self.player_fail = [False, False]
         pass
 
     def current_obs(self, player: int):
@@ -41,26 +48,42 @@ class KoreEnv:
     def check_done(self):
         if self.board.step > self.configuration.episodeSteps:
             self.done = True
+            if self.board.players[0].kore > self.board.players[1].kore:
+                self.rewards[0] = 1
+            elif self.board.players[0].kore < self.board.players[1].kore:
+                self.rewards[1] = 1
+                pass
             pass
         else:
             # if one player fail, the game is done
             for player_id in range(2):
                 player = self.board.players[player_id]
                 num_shipyards = len(player.shipyard_ids)
+                
                 num_fleets = len(player.fleet_ids)
                 num_kore = player.kore
-                num_ships_in_shipyards = sum(shipyard.ship_count for shipyard in player.shipyards)
+                
                 if num_fleets == 0:
                     if num_shipyards == 0:
-                        self.done = True
+                        self.player_fail[player_id] = True
                     else:
-                        if num_ships_in_shipyards == 0 and num_kore < self.spawn_cost:
-                            self.done = True
+                        max_ships_in_shipyards = max(shipyard.ship_count for shipyard in player.shipyards)
+                        if num_kore < self.spawn_cost:
+                            if max_ships_in_shipyards < 21:
+                                self.player_fail[player_id] = True
+                                pass
+                            pass
                         pass
                     pass
+                pass
 
-                if self.done:
-                    break
+            if any(self.player_fail):
+                self.done = True
+                if not self.player_fail[0]:
+                    self.rewards[0] = 1
+                elif not self.player_fail[1]:
+                    self.rewards[1] = 1
+                    pass
                 pass
             pass
         pass
@@ -89,12 +112,7 @@ class KoreEnv:
         pass
 
     def get_reward(self):
-        if self.board.players[0].kore > self.board.players[1].kore:
-            return np.array([1, 0], dtype='float32')
-        elif self.board.players[0].kore < self.board.players[1].kore:
-            return np.array([0, 1], dtype='float32')
-        else:
-            return np.array([0, 0], dtype='float32')
+        return self.rewards
         pass
 
     @classmethod
@@ -125,12 +143,49 @@ class KoreEnv:
 
         res = env.render(mode="html", width=1000, height=800)
 
-        with open(folder + '/play_' + format(iplay, '05d') + '.html', 'w') as f:
+        filename = 'play_' + str(int(time.time())) + '_' + str(os.getpid()) + '_' + '.html'
+        with open(folder + '/' + filename, 'w') as f:
             f.write(res)
             pass
         pass
+
+    @classmethod
+    def serialize_obs(cls, obs: Board):
+        return pickle.dumps((obs.observation, obs.configuration), protocol=pickle.HIGHEST_PROTOCOL)
+
+    @classmethod
+    def deserialize_obs(cls, obs_str):
+        obs, config = pickle.loads(obs_str)
+        return Board(obs, config)
     pass
 
+
+def check_board(board):
+    spawn_cost = board.configuration['spawnCost']
+    player_fail = [False, False]
+
+    for player_id in range(2):
+        player = board.players[player_id]
+        num_shipyards = len(player.shipyard_ids)
+        
+        num_fleets = len(player.fleet_ids)
+        num_kore = player.kore
+        
+        if num_fleets == 0:
+            if num_shipyards == 0:
+                player_fail[player_id] = True
+            else:
+                max_ships_in_shipyards = max(shipyard.ship_count for shipyard in player.shipyards)
+                if num_kore < spawn_cost:
+                    if max_ships_in_shipyards < 21:
+                        player_fail[player_id] = True
+                        pass
+                    pass
+                pass
+            pass
+        pass
+
+    return any(player_fail)
 
 class AgentGivenAction(object):
     def __init__(self, actions, obs_list):
@@ -140,6 +195,16 @@ class AgentGivenAction(object):
 
     def __call__(self, obs, config):
         step = obs['step']
+        
+        if step >= len(self.actions):
+            return {}
+
+        # debug
+        board = Board(obs, self.obs_list[0].configuration)
+        if check_board(board):
+            print('debug')
+            pass
+
         # obs_ = self.obs_list[step]
 
         # kore1 = obs['kore']

@@ -16,19 +16,21 @@ NAME_KEY = 'rb'
 class ReplayBuffer():
     def __init__(self, max_size):
         self.buffer = []
+        self.max_size = max_size
 
     @api.oneway
     def put(self, data):
         self.buffer.append(data)
 
-        if len(self.queue) > self.max_size:
+        if len(self.buffer) > self.max_size:
             self.buffer.pop(0)
             pass
         pass
 
     def sample(self, num=1):
         num = min(num, len(self.buffer))
-        return random.choices(self.buffer, k=num)
+        return random.sample(self.buffer, num)
+        # return self.buffer[:num]
     pass
 
 

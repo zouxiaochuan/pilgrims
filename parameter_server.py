@@ -47,15 +47,24 @@ def run(config_file):
 
     agent = AgentFactory.create(config)
     num_parameter = agent.parameter_size()
-    num_server = config['parameter_server']['num_workers']
 
+    if config['parameter_server']['load_model_path'] is not None:
+        agent.load_model(config['parameter_server']['load_model_path'])
+        pass
+
+    num_server = config['parameter_server']['num_workers']
+    
     id = pyro_utils.get_next_id(ns, NAME_KEY)
+
+    ps = ParameterServer(server_index=id, num_parameters=num_parameter, num_servers=num_server)
+
+    ps.put_parameter(
+        pickle.dumps(
+            agent.copy_parameter(ps.start_index, ps.end_index), protocol=pickle.HIGHEST_PROTOCOL))
+
     name = f'{NAME_KEY}_{id}'
     daemon = server.Daemon()
-    uri = daemon.register(
-        ParameterServer(
-            server_index=id, num_parameters=num_parameter,
-            num_servers=num_server))
+    uri = daemon.register(ps)
     ns.register(name, uri)
     try:
         daemon.requestLoop()

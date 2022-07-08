@@ -27,16 +27,18 @@ class SelfAttention(nn.Module):
         self,
         hidden_states,
         attention_mask=None,
-        output_attentions=False,
+        structure_matrix=None,
     ):
         key_layer = self.transpose_for_scores(self.key(hidden_states))
         value_layer = self.transpose_for_scores(self.value(hidden_states))
         query_layer = self.transpose_for_scores(self.query(hidden_states))
         
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        # torch.einsum('bhcd,bhcd->bhcc', query_layer, key_layer)
-        # attention_scores = torch.ones(
-        #     (query_layer.shape[0], query_layer.shape[1], query_layer.shape[2], key_layer.shape[2]), device=hidden_states.device)
+        if structure_matrix is not None:
+            structure_scores_query = torch.einsum("bhld,lrd->bhlr", query_layer, structure_matrix)
+            structure_scores_key = torch.einsum("bhrd,lrd->bhlr", key_layer, structure_matrix)
+            attention_scores = attention_scores + structure_scores_query + structure_scores_key
+            pass
         
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         attention_probs = attention_scores
@@ -76,12 +78,12 @@ class Attention(nn.Module):
         self,
         hidden_states,
         attention_mask=None,
-        output_attentions=False,
+        structure_matrix=None,
     ):
         self_outputs = self.self(
             hidden_states,
             attention_mask,
-            output_attentions,
+            structure_matrix=structure_matrix,
         )
 
         output = self.dense(self_outputs)
@@ -110,12 +112,12 @@ class TransformerLayer(nn.Module):
         self,
         hidden_states,
         attention_mask=None,
-        output_attentions=False,
+        structure_matrix=None,
     ):     
         self_attention_outputs = self.attention(
             hidden_states,
             attention_mask,
-            output_attentions=output_attentions,
+            structure_matrix=structure_matrix,
         )
         
         attention_output = self_attention_outputs
@@ -134,6 +136,8 @@ class Transformer(nn.Module):
         super().__init__()
         self.bias = nn.init.uniform_(
             nn.Parameter(torch.zeros(hidden_size)))
+        
+        self.num_attention_heads = num_attention_heads
 
         if intermediate_size is None:
             intermediate_size = 4 * hidden_size
@@ -149,36 +153,27 @@ class Transformer(nn.Module):
         
         pass
 
-    def forward(self, hidden_states, attention_mask=None):
-        B = hidden_states.shape[0]
-        hidden_states = torch.cat(
-            (torch.tile(self.bias, (B, 1, 1)), hidden_states), dim=1)
-        if attention_mask is not None:
-            attention_mask = torch.cat(
-                (torch.ones((attention_mask.shape[0], 1), device=hidden_states.device), 
-                 attention_mask), 
-                dim=1)
-            pass
+    def forward(self, hidden_states, attention_mask=None, structure_matrix=None):
 
-        hidden_states = self.forward_(hidden_states, attention_mask)
+        hidden_states = self.forward_(hidden_states, attention_mask, structure_matrix)
         if self.reduction == 'top':
             return hidden_states[:, 0, :]
         elif self.reduction == 'mean':
             return torch.mean(hidden_states, dim=1)
         elif self.reduction is None:
-            return hidden_states[:, 0, :], hidden_states[:, 1:, :]
+            return torch.mean(hidden_states, dim=1), hidden_states
         else:
             raise RuntimeError(f'cannot recognize reduction: {self.reduction}')
         pass
 
 
-    def forward_(self, hidden_states, attention_mask=None):
+    def forward_(self, hidden_states, attention_mask=None, structure_matrix=None):
         if attention_mask is not None:
             attention_mask = (1.0 - attention_mask[:, None, None, :]) * -10000
             pass
 
         for layer in self.layers:
-            hidden_states = layer(hidden_states, attention_mask)
+            hidden_states = layer(hidden_states, attention_mask, structure_matrix)
             pass
 
 
