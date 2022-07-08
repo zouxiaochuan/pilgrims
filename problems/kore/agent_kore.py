@@ -33,7 +33,7 @@ class KoreAgent(Agent):
         self.num_channels_shipyard = 1  # ship_count
         self.num_channels = 1 + self.num_channels_fleet * 2 + \
             self.num_channels_shipyard * 2
-        self.num_feat_player = 5  # kore, total kore, total ships, total shipyards, ship in shipyards
+        self.num_feat_player = 7  # kore, total kore, total ships, total shipyards, ship in shipyards, total kore, total kore add ships
         self.num_feat = self.num_feat_player * 3 + 1 # first player, second, the difference
         config['agent']['num_input_map_channels'] = self.num_channels
         config['agent']['num_input_vec_channels'] = self.num_feat
@@ -85,6 +85,8 @@ class KoreAgent(Agent):
             player_feat_start = player_absid * self.num_feat_player
 
             vec[player_feat_start + 0] = player.kore
+            vec[player_feat_start + 5] += player.kore
+            vec[player_feat_start + 6] += player.kore
             player_kore[player_absid] = player.kore
 
         for fleet_id, fleet in board.fleets.items():
@@ -100,7 +102,9 @@ class KoreAgent(Agent):
             map[fleet_channel + 2 + fleet.direction.to_index(), fleet_index] = 1
 
             vec[player_feat_start + 1] += fleet.kore
+            vec[player_feat_start + 5] += fleet.kore
             vec[player_feat_start + 2] += fleet.ship_count
+            vec[player_feat_start + 6] += fleet.kore + fleet.ship_count * self.spawn_cost
             pass
 
         for shipyard_id, shipyard in board.shipyards.items():
@@ -113,6 +117,7 @@ class KoreAgent(Agent):
             vec[player_feat_start + 2] += shipyard.ship_count
             vec[player_feat_start + 3] += 1
             vec[player_feat_start + 4] += shipyard.ship_count
+            vec[player_feat_start + 6] += shipyard.ship_count * self.spawn_cost
 
             if player_absid == 0:
                 my_shipyard_index.append(shipyard_index)

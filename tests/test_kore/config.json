@@ -10,14 +10,14 @@
     "agent": {
         "num_candidate_points": 10,
         "num_encode_layers": 2,
-        "num_decode_layers": 1,
+        "num_decode_layers": 3,
         "hidden_size": 128,
         "point_temperature": 0.25,
         "first_layer_temperature": 0.5
     },
     "actor": {
         "num_states_per_play": 16,
-        "temperature": 1,
+        "temperature": 0.5,
         "batch_size": 2,
         "save_play_interval": 10,
         "save_play_path": "save/play/"
@@ -29,7 +29,7 @@
     "learner": {
         "num_step_per_push_ps": 10,
         "num_data_workers": 16,
-        "batch_size": 256,
+        "batch_size": 200,
         "save_model_interval": 10000,
         "save_model_path": "save/model/"
     }
