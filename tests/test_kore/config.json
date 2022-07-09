@@ -12,7 +12,7 @@
         "num_encode_layers": 2,
         "num_decode_layers": 3,
         "hidden_size": 128,
-        "point_temperature": 0.25,
+        "point_temperature": 1,
         "first_layer_temperature": 0.5
     },
     "actor": {
