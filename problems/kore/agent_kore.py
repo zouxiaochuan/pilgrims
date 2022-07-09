@@ -1040,7 +1040,7 @@ class KoreAgent(Agent):
 
     @classmethod
     def load_model(cls, path):
-        config, state_dict = torch.load(path)
+        config, state_dict = torch.load(path, map_location='cpu')
         agent = cls(config)
         agent.model.load_state_dict(state_dict)
         return agent
