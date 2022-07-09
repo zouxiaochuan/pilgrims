@@ -7,7 +7,7 @@ import actor
 @click.command()
 @click.option('--config-file', default='config.json')
 @click.option('--devices', default='2,3,4,5,6,7')
-@click.option('--worker-per-device', default=4)
+@click.option('--worker-per-device', default=5)
 def run_cmd(config_file, devices, worker_per_device):
     config = common_utils.load_config(config_file)
     

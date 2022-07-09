@@ -6,8 +6,9 @@ import os
 import multiprocessing as mp
 
 
-agent_model = AgentFromRL('save/model/20220708132435.pth', device='cuda:1')
-agent_other = AgentFromRL('save/model/20220708050155.pth', device='cuda:1')
+agent_model = AgentFromRL('save/model/20220709011542.pth', device='cuda:1')
+# agent_other = AgentFromRL('save/model/20220708050155.pth', device='cuda:1')
+agent_other = miner_agent
 save_path = 'save/combat_fail/'
 
 
@@ -35,7 +36,7 @@ def play(param):
 if __name__ == '__main__':
     save_path = 'save/combat_fail/'
 
-    # agent_other = miner_agent
+    
 
     os.system('rm -rf ' + save_path + '/*')
     win_cnt = 0

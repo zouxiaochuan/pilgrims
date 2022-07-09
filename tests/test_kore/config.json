@@ -1,5 +1,5 @@
 {
-    "master_ip": "127.0.0.1",
+    "master_ip": "10.244.18.160",
     "master_port": 32171,
     "problem_path": "problems/kore",
     "agent_module_name": "agent_kore",

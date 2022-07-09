@@ -7,7 +7,7 @@ import numpy as np
 import common_utils
 import pickle
 from agent_factory import AgentFactory
-
+import socket
 
 pyro_utils.init()
 
@@ -63,7 +63,8 @@ def run(config_file):
             agent.copy_parameter(ps.start_index, ps.end_index), protocol=pickle.HIGHEST_PROTOCOL))
 
     name = f'{NAME_KEY}_{id}'
-    daemon = server.Daemon()
+    ip = socket.gethostbyname(socket.gethostname())
+    daemon = server.Daemon(host=ip)
     uri = daemon.register(ps)
     ns.register(name, uri)
     try:

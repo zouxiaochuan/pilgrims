@@ -7,6 +7,7 @@ import random
 from threading import Thread
 import time
 import pickle
+import socket
 
 
 NAME_KEY = 'rb'
@@ -55,7 +56,8 @@ def run(master_ip, master_port, max_size):
     ns: NameServer = api.locate_ns(host=master_ip, port=master_port)
     id = pyro_utils.get_next_id(ns, NAME_KEY)
     name = f'{NAME_KEY}_{id}'
-    daemon = server.Daemon()
+    ip = socket.gethostbyname(socket.gethostname())
+    daemon = server.Daemon(host=ip)
     rb_obj = ReplayBuffer(max_size)
     start_report_thread(rb_obj)
     uri = daemon.register(rb_obj)
