@@ -12,7 +12,6 @@ from . import const_kore
 from agent import DecisionResult, Agent
 from typing import Dict, List
 from .model_kore import KoreNetworks
-import common_utils
 
 
 class ShipyardActionEx(object):
