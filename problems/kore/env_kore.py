@@ -69,7 +69,7 @@ class KoreEnv:
                     else:
                         max_ships_in_shipyards = max(shipyard.ship_count for shipyard in player.shipyards)
                         if num_kore < self.spawn_cost:
-                            if max_ships_in_shipyards < 21:
+                            if max_ships_in_shipyards < 3:
                                 self.player_fail[player_id] = True
                                 pass
                             pass

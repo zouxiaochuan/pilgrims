@@ -8,6 +8,8 @@ class AgentFromRL(object):
         self.agent = KoreAgent.load_model(model_path)
         self.agent.first_layer_temperature = 0.0001
         self.agent.point_temperature = 0.0001
+        self.agent.launch_num_temperature = 0.0001
+        self.agent.num_candidate_points = 1
         self.agent.eval()
         self.agent.to_device(device)
         pass

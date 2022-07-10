@@ -45,9 +45,11 @@ class KoreNetworks(nn.Module):
             nn.Linear(config['hidden_size'], 3))
         self.cls_launch_point = nn.Linear(config['hidden_size'], config['hidden_size'])
         self.cls_launch_point2 = nn.Linear(config['hidden_size'], config['hidden_size'])
+        self.cls_launch_number = nn.Linear(config['hidden_size'], 2)
         self.cls_convert_point = nn.Linear(config['hidden_size'], config['hidden_size'])
         self.cls_convert_point2 = nn.Linear(config['hidden_size'], config['hidden_size'])
 
+        
         
 
         self.init_map_structure(config)
@@ -129,6 +131,12 @@ class KoreNetworks(nn.Module):
 
         return scores
         pass
+
+    def forward_launch_number(self, embs, shipyard_index):
+        shipyard_emb = embs['map_emb'][embs['batch_index'], shipyard_index]
+
+        scores = self.cls_launch_number(shipyard_emb)
+        return scores
 
     def forward_convert_point(self, embs, shipyard_index):
         map_structure = embs['map_structure']

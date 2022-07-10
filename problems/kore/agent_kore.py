@@ -12,6 +12,7 @@ from . import const_kore
 from agent import DecisionResult, Agent
 from typing import Dict, List
 from .model_kore import KoreNetworks
+import common_utils
 
 
 class ShipyardActionEx(object):
@@ -41,6 +42,7 @@ class KoreAgent(Agent):
         config['agent']['map_size'] = self.size
         self.point_temperature = config['agent']['point_temperature']
         self.first_layer_temperature = config['agent']['first_layer_temperature']
+        self.launch_num_temperature = config['agent']['launch_num_temperature']
 
         self.num_candidate_points = config['agent']['num_candidate_points']
         self.num_launch_points = self.size2
@@ -50,6 +52,8 @@ class KoreAgent(Agent):
         self.spawn_cost = env.spawn_cost
         self.device = 'cpu'
         self.mask4_list = []
+        self.map_index = torch.arange(self.size2, device=self.device)
+        self.map_xy = self.map_index2xy(self.map_index)
 
         pass
 
@@ -171,11 +175,18 @@ class KoreAgent(Agent):
         pass
 
     def vectorize_act(self, actions: List[ShipyardActionEx]):
-        v = torch.zeros((len(actions), 2), dtype=torch.long, device=self.device)
+        v = torch.zeros((len(actions), 3), dtype=torch.long, device=self.device)
         for i, action in enumerate(actions):
             v[i, 0] = action.latent_variables['first_layer']
             point_index = action.latent_variables.get('point_index', 0)
             v[i, 1] = (self.size2)*(v[i, 0]-1) + point_index
+            launch_num = action.latent_variables.get('launch_num')
+
+            if launch_num is None:
+                v[i, 2] = 0
+            else:
+                v[i, 2] = 1 + launch_num
+                pass
             pass
 
         return v
@@ -183,7 +194,7 @@ class KoreAgent(Agent):
     def collate_act_vec(self, action_vecs):
         max_len = max([v.shape[0] for v in action_vecs])
         batch = torch.zeros(
-            (len(action_vecs), max_len, 2), dtype=action_vecs[0].dtype,
+            (len(action_vecs), max_len, 3), dtype=action_vecs[0].dtype,
             device=self.device)
         for i, v in enumerate(action_vecs):
             batch[i, :v.shape[0], :] = v
@@ -223,22 +234,16 @@ class KoreAgent(Agent):
         score_first_layer = self.model.forward_first_layer(shipyard_embs)
         # [B, SY, 3]
 
-        mask_cannot_launch = obs_vec_batch['my_shipyard']['ship_count']<21
+        mask_cannot_launch = obs_vec_batch['my_shipyard']['ship_count']<3
         mask_cannot_convert = obs_vec_batch['my_shipyard']['ship_count']<50
 
         # if torch.logical_not(mask_cannot_convert).sum() > 0:
         #     print(torch.softmax(score_first_layer*2, dim=-1))
         #     exit(-1)
 
-        mask_cannot_launch = mask_cannot_launch.unsqueeze(-1).repeat(1, 1, 3)
-        mask_cannot_launch[:, :, 0] = False
-        mask_cannot_launch[:, :, 2] = False
-        mask_cannot_convert = mask_cannot_convert.unsqueeze(-1).repeat(1, 1, 3)
-        mask_cannot_convert[:, :, 0] = False
-        mask_cannot_convert[:, :, 1] = False
+        score_first_layer = common_utils.masked_nd_assign(score_first_layer, mask_cannot_launch, 1, -1e10)
+        score_first_layer = common_utils.masked_nd_assign(score_first_layer, mask_cannot_convert, 2, -1e10)
 
-        score_first_layer[mask_cannot_launch] = -1e10
-        score_first_layer[mask_cannot_convert] = -1e10
         score_spawn_branch = score_first_layer[..., 0]
         score_launch_branch = score_first_layer[..., 1]
         score_convert_branch = score_first_layer[..., 2]
@@ -446,15 +451,22 @@ class KoreAgent(Agent):
             launch_mask: [B, SY]
         '''
         B, SY = score_launch_branch.shape
-        batch_mask = torch.zeros((B, SY), device=score_launch_branch.device)
         ship_counts = obs_vec_batch['my_shipyard']['ship_count']
+        # ship_counts: [B, SY]
 
-        batch_mask[ship_counts >= 21] = 1
+        # if torch.logical_and(ship_counts < 21, ship_counts > 7).any():
+        #     print('debug')
+        #     pass
+        point_mask = self.get_point_mask(shipyard_index, ship_counts)
+
         shipyard_mask = obs_vec_batch['my_shipyard']['mask']
-        shipyard_action_mask = shipyard_mask * batch_mask * launch_mask
+        shipyard_action_mask = shipyard_mask * launch_mask
 
         if torch.sum(shipyard_action_mask) > 0:
+
             index_score = self.model.forward_launch_point(embs, shipyard_index)
+            index_score[torch.logical_not(point_mask)] = -1e15
+
             index_proba = torch.softmax(index_score / self.point_temperature, dim=-1)
             # index_proba: [B, SY, P(num_launch_points)]
             sampled_index = torch.multinomial(
@@ -477,9 +489,16 @@ class KoreAgent(Agent):
 
             batch_plans = self.generate_launch_plan(
                 shift_xy, shipyard_xy, shipyard_action_mask, shipyard_mask,
-                obs_vec_batch['kore_map'])
-
+                obs_vec_batch['kore_map'], ship_counts)
             # batch_plans: list of shape [B, num_shipyards, num_candidates]
+
+            # launch number
+            num_launch_scores = self.model.forward_launch_number(embs, shipyard_index)
+            num_launch_proba = torch.softmax(num_launch_scores / self.launch_num_temperature, dim=-1)
+            sampled_num = torch.multinomial(
+                num_launch_proba.reshape(-1, num_launch_scores.shape[-1]), num_samples=1, replacement=False)
+            sampled_num = sampled_num.reshape(B, SY)
+
         else:
             batch_plans = [
                 [
@@ -491,21 +510,62 @@ class KoreAgent(Agent):
 
             pass
 
-        action_launch = [
-            [
-                [
-                    ShipyardActionEx(
-                        ShipyardAction(ShipyardActionType.LAUNCH, int(ship_counts[ibatch, ishipyard]), flight_plan),
-                        latent_variables={'first_layer': 1, 'point_index': sampled_index[ibatch, ishipyard, iplan].item()}
-                    ) if flight_plan is not None else None
-                    for iplan, flight_plan in enumerate(shipyard_plan)
-                ] if shipyard_action_mask[ibatch, ishipyard] > 0 else
-                [
-                    None for _ in shipyard_plan
-                ]
-                for ishipyard, shipyard_plan in enumerate(plans)
-            ] for ibatch, plans in enumerate(batch_plans)
-        ]
+        action_launch = []
+        for ibatch, plans in enumerate(batch_plans):
+            batch_actions = []
+            for ishipyard, shipyard_plan in enumerate(plans):
+                if shipyard_action_mask[ibatch, ishipyard] > 0:
+                    use_minimal = sampled_num[ibatch, ishipyard] == 0
+                    shipyard_actions = []
+                    for iplan, flight_plan in enumerate(shipyard_plan):
+                        if flight_plan is None:
+                            shipyard_actions.append(None)
+                        else:
+                            if use_minimal:
+                                if len(flight_plan) <= 3:
+                                    launch_num = 4
+                                elif len(flight_plan) <= 6:
+                                    launch_num = 13
+                                else:
+                                    launch_num = 21
+                                    pass
+                            else:
+                                launch_num = 999999
+                                pass
+                            launch_num = min(launch_num, ship_counts[ibatch, ishipyard])
+                            latent_variables = {
+                                'first_layer': 1, 
+                                'point_index': sampled_index[ibatch, ishipyard, iplan].item()
+                            }
+                            if ship_counts[ibatch, ishipyard] > 21:
+                                latent_variables['launch_num'] = sampled_num[ibatch, ishipyard].item()
+                                pass
+                            
+                            if (launch_num <= 20 and len(flight_plan) > 6):
+                                print(flight_plan)
+                                print(launch_num)
+                                print(shift_xy[ibatch, ishipyard, iplan])
+                                print(shipyard_xy[ibatch, ishipyard])
+                                print(torch.where(point_mask[ibatch, ishipyard])[0])
+                                print(torch.max(index_proba[ibatch, ishipyard]))
+                                
+                                raise RuntimeError('debug')
+                                pass
+
+                            action = ShipyardActionEx(
+                                ShipyardAction(ShipyardActionType.LAUNCH, int(launch_num), flight_plan),
+                                latent_variables=latent_variables)
+                            shipyard_actions.append(action)
+                            pass
+                        pass
+                    pass
+                else:
+                    shipyard_actions = [None for _ in shipyard_plan]
+                    pass
+                batch_actions.append(shipyard_actions)
+                pass
+            action_launch.append(batch_actions)
+            pass
 
         if sampled_score.shape[-1] == 0:
             score_launch = sampled_score.unsqueeze(-1)
@@ -523,6 +583,8 @@ class KoreAgent(Agent):
             score_mask[shipyard_action_mask.bool(), :, :] = 1
 
             return action_launch, score_launch, score_mask
+
+
 
     def decide_convert(self, score_convert_branch, embs, shipyard_index, obs_vec_batch, convert_mask):
         B, SY = score_convert_branch.shape
@@ -557,7 +619,7 @@ class KoreAgent(Agent):
 
             batch_plans = self.generate_launch_plan(
                 shift_xy, shipyard_xy, shipyard_action_mask, shipyard_mask,
-                obs_vec_batch['kore_map'],
+                obs_vec_batch['kore_map'], ship_counts,
                 need_back=False, remove_last_number=False)
             pass
         else:
@@ -605,9 +667,86 @@ class KoreAgent(Agent):
 
             return action_convert, score_convert, score_mask
 
+    def get_point_mask(self, shipyard_index, shipyard_ship_count):
+        '''
+
+        Parameters:
+            shipyard_index: [B, SY]
+            shipyard_ship_count: [B, SY]
+        '''
+
+        B, SY = shipyard_index.shape
+        mask = torch.zeros((B, SY, self.size2), device=shipyard_index.device, dtype=torch.bool)
+
+        mask_line = shipyard_ship_count <= 12
+        mask_boarder = torch.logical_and(shipyard_ship_count > 12, shipyard_ship_count <= 20)
+        mask_all = shipyard_ship_count > 20
+
+        shipyard_xy = self.map_index2xy(shipyard_index)
+        # shipyard_xy: [B, SY, 2]
+        map_xy = self.map_xy
+        # map_xy: [size2, 2]
+
+        point_mask_line = self.get_line_mask(mask_line, shipyard_xy, map_xy)
+        point_mask_boarder = self.get_boarder_mask(mask_boarder, shipyard_xy, map_xy)
+        point_mask_all = mask_all[:, :, None].expand(point_mask_line.shape)
+
+        return torch.logical_or(
+            torch.logical_or(point_mask_line, point_mask_boarder),
+            point_mask_all)
+
+
+    def get_line_mask(self,mask_line, shipyard_xy, map_xy):
+        bshape = shipyard_xy.shape[:-1] + map_xy.shape[0:1]
+
+        mask_x = shipyard_xy[:, :, 0:1].expand(bshape) == map_xy[:, 0].expand(bshape)
+        mask_y = shipyard_xy[:, :, 1:2].expand(bshape) == map_xy[:, 1].expand(bshape)
+        mask_xy = torch.logical_or(mask_x, mask_y)
+
+        return torch.logical_and(mask_line[:, :, None], mask_xy)
+
+        pass
+
+
+    def get_boarder_mask(self, mask_boarder, shipyard_xy, map_xy):
+        bshape = shipyard_xy.shape[:-1] + map_xy.shape[0:1]
+
+        shipyard_x = shipyard_xy[:, :, 0:1].expand(bshape)
+        shipyard_y = shipyard_xy[:, :, 1:2].expand(bshape)
+        map_x = map_xy[:, 0].expand(bshape)
+        map_y = map_xy[:, 1].expand(bshape)
+
+        diff_x = shipyard_x - map_x
+        diff_x[diff_x>self.size_half] -= self.size
+        diff_x[diff_x<-self.size_half] += self.size
+        
+        diff_y = shipyard_y - map_y
+        diff_y[diff_y>self.size_half] -= self.size
+        diff_y[diff_y<-self.size_half] += self.size
+
+        mask_x = torch.abs(diff_x) <= 1
+        mask_y = torch.abs(diff_y) <= 1
+
+        mask_xy = torch.logical_or(mask_x, mask_y)
+
+        return torch.logical_and(mask_boarder[:, :, None], mask_xy)
+
+        pass
+
+    def point_mask_merge(shipyard_mask, x_mask, y_mask):
+
+        shipyard_mask = shipyard_mask[:, :, None, None]
+
+        x_mask = x_mask[None, None, x_mask, None]
+        y_mask = y_mask[None, None, None, y_mask]
+
+        return torch.logical_and(shipyard_mask, torch.logical_and(x_mask, y_mask))
+
+        pass
+
     def generate_launch_plan(
             self, shift_xy, shipyard_xy, shipyard_action_mask, shipyard_mask, kore_map,
-            need_back=True, remove_last_number=True):
+            ship_counts, need_back=True, remove_last_number=True):
         '''
 
         Parameters:
@@ -625,6 +764,11 @@ class KoreAgent(Agent):
             nearest_shipyard, nearest_shipyard_shift = self.find_nearest_back_shipyard(
                 shift_xy, shipyard_xy, shipyard_mask)
             # nearest_shipyard: [B, SY, P], nearest_shipyard_shift: [B, SY, P, 2]
+            self_mask = ship_counts < 21
+            self_mask_ind = torch.where(self_mask)
+
+            nearest_shipyard[self_mask_ind[0], self_mask_ind[1], :] = self_mask_ind[1][:, None]
+            nearest_shipyard_shift[self_mask_ind[0], self_mask_ind[1], :, :] = shift_xy[self_mask_ind[0], self_mask_ind[1], :, :]
             pass
 
         for ibatch in range(shift_xy.shape[0]):
@@ -715,7 +859,7 @@ class KoreAgent(Agent):
 
         return pair_diff
 
-    def find_nearest_back_shipyard(self, shift_xy, shipyard_xy: torch.Tensor, shipyard_mask, size=21):
+    def find_nearest_back_shipyard(self, shift_xy, shipyard_xy: torch.Tensor, shipyard_mask):
         '''
         Parameters:
             shift_xy: [B, SY, P, 2]
@@ -725,6 +869,7 @@ class KoreAgent(Agent):
             nearest_idx: [B, SY, P], nearest shipyard idx
             nearest_shift: [B, SY, P, 2], shift from nearest shipyard to launch point
         '''
+        size = self.size
         point_xy = shipyard_xy.unsqueeze(-2) + shift_xy
         point_xy %= size
         B = point_xy.shape[0]
@@ -860,6 +1005,7 @@ class KoreAgent(Agent):
         first_layer_scores = self.model.forward_first_layer(shipyard_embs)
         launch_scores = self.model.forward_launch_point(embs, shipyard_index)
         convert_scores = self.model.forward_convert_point(embs, shipyard_index)
+        launch_num_scores = self.model.forward_launch_number(embs, shipyard_index)
 
         score1_index = act_vec_batch[:, :, 0]
         scores1 = torch.gather(
@@ -880,6 +1026,12 @@ class KoreAgent(Agent):
         v_next = torch.tile(v_next, [1, max_shipyard])
         # v_next = torch.tile(reward_batch[:, None], [1, max_shipyard])
 
+        score3_mask = torch.logical_and(act_vec_batch[:, :, 2] > 0, shipyard_mask)
+        score3_index = torch.abs(act_vec_batch[:, :, 2] - 1)
+        score3 = torch.gather(
+            launch_num_scores, -1, score3_index.unsqueeze(-1).clone()
+        ).squeeze(-1)
+
         loss1 = torch.mean(
             torch.masked_select(
                 F.binary_cross_entropy_with_logits(scores1, v_next, reduction='none'),
@@ -890,46 +1042,12 @@ class KoreAgent(Agent):
                 F.binary_cross_entropy_with_logits(scores2, v_next, reduction='none'),
             score2_mask))
 
-        # debug
-        score3_mask = torch.logical_and(score1_index == 2, shipyard_mask)
-        v_next_score3 = torch.masked_select(v_next, score3_mask)
-        v_score3 = torch.masked_select(torch.tile(v, [1, max_shipyard]), score3_mask)
-        reward_score3 = torch.masked_select(torch.tile(reward_batch[:, None], [1, max_shipyard]), score3_mask)
-        vec_score3 = torch.tile(obs_vec_batch['vec'][:, None, :], [1, max_shipyard, 1])[score3_mask, :]
-
-        mask4 = (torch.exp(vec_score3[:, 2*self.num_feat_player+2])-1) < 70
-
-        if torch.sum(mask4) > 0:
-            self.mask4_list.append(reward_score3[mask4].cpu().numpy())
-            pass
-        
-        if len(self.mask4_list) > 100:
-            self.mask4_list.pop(0)
-            pass
-
-        if torch.sum(mask4) >0:
-            # print('debug')
-            pass
-        
-        if len(self.mask4_list) > 0:
-            print(f'{np.concatenate(self.mask4_list).mean()}')
-            pass
-        
-        # debug
-        # mymask = score1_index[shipyard_mask] == 1
-
-        # score_mymask = scores1[shipyard_mask][mymask]
-        # v_next_mymask = v_next[shipyard_mask][mymask]
-        # self.sum_mask4 += torch.sum(v_next[shipyard_mask][mymask]).item()
-        # self.cnt_mask4 += torch.sum(mymask).item()
-
-        # if torch.sum(mymask) > 0:
-        #     print('debug')
-        #     pass
-
-        # print(self.sum_mask4 / self.cnt_mask4)
-
-        return loss_v, loss1, loss2
+        loss3 = torch.mean(
+            torch.masked_select(
+                F.binary_cross_entropy_with_logits(score3, v_next, reduction='none'),
+            score3_mask)
+        )
+        return loss_v, loss1, loss2, loss3
         # return loss1, loss2
 
     def correct_action(self, dresult: DecisionResult, obs_list: List):
@@ -1037,6 +1155,8 @@ class KoreAgent(Agent):
     def to_device(self, device):
         self.device = device
         self.model.to(device)
+        self.map_index = self.map_index.to(device)
+        self.map_xy = self.map_xy.to(device)
 
     @classmethod
     def load_model(cls, path):

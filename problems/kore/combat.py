@@ -6,8 +6,8 @@ import os
 import multiprocessing as mp
 
 
-agent_model = AgentFromRL('save/model/20220709011542.pth', device='cuda:1')
-# agent_other = AgentFromRL('save/model/20220708050155.pth', device='cuda:1')
+agent_model = AgentFromRL('save/model/20220710003519.pth', device='cuda:1')
+# agent_other = AgentFromRL('save/model/20220709011542.pth', device='cuda:1')
 agent_other = miner_agent
 save_path = 'save/combat_fail/'
 
@@ -46,7 +46,7 @@ if __name__ == '__main__':
         env = kaggle_environments.make("kore_fleets", debug=True)
         pool = mp.Pool(processes=2)
 
-        results = pool.map(play, [(0, cnt), (1, cnt)])
+        results = map(play, [(0, cnt), (1, cnt)])
 
         for r in results:
             win_cnt += r

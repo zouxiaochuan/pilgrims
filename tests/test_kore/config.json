@@ -12,8 +12,9 @@
         "num_encode_layers": 2,
         "num_decode_layers": 3,
         "hidden_size": 128,
-        "point_temperature": 1,
-        "first_layer_temperature": 0.5
+        "point_temperature": 0.5,
+        "first_layer_temperature": 0.5,
+        "launch_num_temperature": 0.5
     },
     "actor": {
         "num_states_per_play": 16,
