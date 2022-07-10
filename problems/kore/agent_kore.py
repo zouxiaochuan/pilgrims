@@ -22,6 +22,14 @@ class ShipyardActionEx(object):
         pass
     pass
 
+def masked_nd_assign(tensor, mask, dim, value):
+    mask1 = mask[:, :, None].expand(tensor.shape)
+    mask2 = torch.zeros(tensor.shape[-1], device=tensor.device, dtype=torch.bool)
+    mask2[dim] = True
+    mask2 = mask2.expand(tensor.shape)
+
+    tensor[torch.logical_and(mask1, mask2)] = value
+    return tensor
 
 class KoreAgent(Agent):
 
@@ -241,8 +249,8 @@ class KoreAgent(Agent):
         #     print(torch.softmax(score_first_layer*2, dim=-1))
         #     exit(-1)
 
-        score_first_layer = common_utils.masked_nd_assign(score_first_layer, mask_cannot_launch, 1, -1e10)
-        score_first_layer = common_utils.masked_nd_assign(score_first_layer, mask_cannot_convert, 2, -1e10)
+        score_first_layer = masked_nd_assign(score_first_layer, mask_cannot_launch, 1, -1e10)
+        score_first_layer = masked_nd_assign(score_first_layer, mask_cannot_convert, 2, -1e10)
 
         score_spawn_branch = score_first_layer[..., 0]
         score_launch_branch = score_first_layer[..., 1]

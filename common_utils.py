@@ -59,16 +59,6 @@ def batch_to_device(batch, device):
     pass
 
 
-def masked_nd_assign(tensor, mask, dim, value):
-    mask1 = mask[:, :, None].expand(tensor.shape)
-    mask2 = torch.zeros(tensor.shape[-1], device=tensor.device, dtype=torch.bool)
-    mask2[dim] = True
-    mask2 = mask2.expand(tensor.shape)
-
-    tensor[torch.logical_and(mask1, mask2)] = value
-    return tensor
-
-
 def multi_masked_assign(tensor, masks, value):
     
     masks = [m.expand(tensor.shape) for m in masks]
